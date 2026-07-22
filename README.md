@@ -1,21 +1,29 @@
 # Sprint Timing
 
-Native Android sprint timing MVP for a Google Pixel 7 start camera, OnePlus Nord 2T finish camera, and a receive-only pad results display.
+Native Android sprint timing MVP for a Google Pixel 7, Huawei EML-L29, and OnePlus Nord 2T camera array, plus a receive-only pad results display.
 
-The app uses Camera2 source-frame timestamps, a three-zone luma line-crossing detector, an affine GNSS-to-elapsed-realtime clock model, and four-timestamp UDP peer synchronization. The Pixel defaults to the START role and the OnePlus defaults to FINISH. Results are rejected when the GNSS model is not sufficiently qualified.
+Android 10/API 29 and newer are supported. The Pixel defaults to START, Huawei EML-L29 to SPLIT, OnePlus to FINISH, and the Xiaomi pad to DISPLAY.
+
+The app uses Camera2 source-frame timestamps, a three-zone luma line-crossing detector, an affine GNSS-to-elapsed-realtime clock model, and per-phone four-timestamp UDP synchronization. Each camera phone contributes one timestamp. The three timestamps are sorted: earliest is start, second is the split, and third is the finish. GNSS is used only when all three events have qualified GNSS mappings; otherwise the per-peer Wi-Fi clock models provide the fallback time domain.
 
 ## Use
 
-1. Put both phones on the same Wi-Fi network or hotspot and enable Location/GPS.
+1. Put all three camera phones and the display pad on the same Wi-Fi network or hotspot and enable Location/GPS on the phones.
 2. Open **Sprint Timing** outdoors with a clear view of the sky and wait for GNSS to become `LOCKED` or `DEGRADED`.
 3. Aim each phone across its timing line, confirm the roles, and tap **ARM** on both.
 4. Cross the start line and then the finish line. Only timestamps and synchronization packets are exchanged; video stays on each phone.
 
-For setup and indoor testing, tap **MANUAL TRIGGER** on START and then FINISH. If GNSS is unavailable, manual mode visibly falls back to the measured two-way Wi-Fi clock relationship and includes its uncertainty in the result. Camera-triggered production runs remain GNSS-gated.
+For setup and indoor testing, tap **MANUAL TRIGGER** once on each of the three camera phones in the same order the athlete crosses them. The finish phone sorts the timestamps and publishes both split and total time. If GNSS is unavailable on any phone, the run visibly falls back to measured two-way Wi-Fi clock relationships and includes their uncertainty.
 
-The front camera is selected by default. Use **CAMERA: FRONT/BACK** to switch Camera2 sessions before arming; switching automatically disarms the detector.
+The Pixel 7 defaults to its rear camera because that measurement stream delivers 60 fps. The OnePlus defaults to its front camera. Use **CAMERA: FRONT/BACK** to switch Camera2 sessions before arming; switching automatically disarms the detector.
 
-On other Android devices, including the paired pad, the same APK automatically enters `DISPLAY` mode. It requests no camera or location permissions, never participates in clock synchronization, and only listens for run state and final result broadcasts.
+The Pixel 7 requests an advertised 60 fps Camera2 range; the OnePlus remains at 30 fps. The app measures delivered cadence from source-frame timestamps and displays the measured FPS rather than assuming the request succeeded.
+
+On other Android devices, including the paired Xiaomi pad, the same APK automatically enters `DISPLAY` mode. It requests no camera or location permissions, never participates in clock synchronization, and only listens for run state and final result broadcasts.
+
+The pad provides remote controls for all three timing phones: a shared **ARM/DISARM DEVICES** toggle, independent START, SPLIT, and FINISH sensitivity sliders, and a shared **PREVIEW ON/OFF** toggle. Sensitivity changes the luma-difference and zone-occupancy thresholds on the targeted detector. Preview OFF only makes the TextureView and timing-line overlay transparent; the Camera2 analysis surface and armed detector continue running.
+
+Completed results are stored on the pad in a persistent, newest-first history containing time, duration, timing mode/confidence, and uncertainty.
 
 The installable debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
 

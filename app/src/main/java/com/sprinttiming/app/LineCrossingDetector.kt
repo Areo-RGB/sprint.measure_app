@@ -8,6 +8,7 @@ class LineCrossingDetector {
     data class Event(val timestampNanos: Long, val confidence: Float, val intervalNanos: Long)
 
     var direction = Direction.LEFT_TO_RIGHT
+    @Volatile private var sensitivity = 50
     private var previous: ByteArray? = null
     private var state = State.CLEAR
     private var lastTimestamp = 0L
@@ -18,6 +19,7 @@ class LineCrossingDetector {
     private var refractoryUntil = 0L
 
     fun reset() { previous = null; state = State.CLEAR; confirmingFrames = 0; quietFrames = 0; refractoryUntil = 0L }
+    fun setSensitivity(value: Int) { sensitivity = value.coerceIn(0, 100); reset() }
 
     fun process(y: ByteArray, width: Int, height: Int, timestampNanos: Long): Event? {
         val old = previous
@@ -27,16 +29,18 @@ class LineCrossingDetector {
         val counts = IntArray(3)
         val top = height / 6
         val bottom = height * 5 / 6
+        val configuredSensitivity = sensitivity
+        val pixelThreshold = 28 - configuredSensitivity * 18 / 100
         for (row in top until bottom step 2) for (col in 0 until width step 2) {
             val z = (col * 3 / width).coerceIn(0, 2)
             val d = abs((y[row * width + col].toInt() and 255) - (old[row * width + col].toInt() and 255))
-            if (d > 18) zone[z]++
+            if (d > pixelThreshold) zone[z]++
             counts[z]++
         }
         for (i in 0..2) zone[i] /= counts[i].coerceAtLeast(1).toFloat()
         val first = if (direction == Direction.LEFT_TO_RIGHT) 0 else 2
         val last = 2 - first
-        val active = 0.075f
+        val active = 0.12f - configuredSensitivity * 0.0008f
         when (state) {
             State.CLEAR -> if (zone[first] > active && zone[first] > zone[last] * 1.15f) state = State.APPROACHING
             State.APPROACHING -> {

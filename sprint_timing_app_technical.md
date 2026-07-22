@@ -2,14 +2,16 @@
 
 - **Platform**
   - Android only.
-  - Personal-use app for two known phones: **Google Pixel 7** and **OnePlus Nord 2T 5G**.
+  - Personal-use app for three known camera phones: **Google Pixel 7**, **Huawei EML-L29**, and **OnePlus Nord 2T 5G**.
   - Optimize for these exact devices rather than broad Android compatibility.
 
 - **Overall Architecture**
-  - One phone at the start line and one at the finish line.
+  - Place one phone at each of three timing lines. Pixel defaults to START, Huawei to SPLIT, and OnePlus to FINISH.
   - Each phone performs **local camera analysis** and detects the athlete crossing a virtual timing line.
   - Never send video between phones.
   - Exchange only run state, health/status, synchronization data, and final event timestamps.
+  - Collect exactly one event timestamp from each camera phone, sort the three values, and interpret earliest as start, second as split, and third as finish.
+  - Report `split time = second − earliest` and `finish time = third − earliest`; do not use packet arrival order.
 
 - **Primary Shared Time Domain**
   - Use **GPS/GNSS time as the common global time domain**.
@@ -28,7 +30,7 @@
   - Reject or flag runs when time uncertainty exceeds the configured threshold.
 
 - **Secondary Synchronization / Cross-Check**
-  - Keep a direct Wi-Fi link between the phones.
+  - Keep a direct Wi-Fi link between all three phones.
   - Recommended first implementation:
     - one phone hotspot;
     - other phone connected locally;
@@ -37,9 +39,10 @@
     - backup when GNSS quality is insufficient;
     - independent cross-check of the GNSS-derived clock relationship.
   - Prefer repeated two-way exchanges, minimum-delay sample selection, outlier rejection, and drift estimation.
+  - Maintain a separate offset/delay model per peer; a single shared Wi-Fi offset is invalid once a third timing phone is added.
 
 - **Camera Timestamp Requirement**
-  - Verify on both physical devices that the selected camera reports a timestamp source compatible with the Android elapsed realtime domain.
+  - Verify on all three physical camera devices that the selected camera reports a timestamp source compatible with the Android elapsed realtime domain.
   - Prefer cameras exposing `SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME`.
   - Test the exact physical camera used for timing; do not assume all cameras on the phone behave identically.
   - Treat this as a hardware qualification test before finalizing the architecture.
@@ -136,7 +139,7 @@
   - Detection-processing latency must not be included in the sprint time.
 
 - **Recommended Final System**
-  - Camera2 capture on both phones.
+  - Camera2 capture on all three phones.
   - Narrow line-based ROI.
   - Luma-only analysis initially.
   - Lightweight directional temporal-difference detector.
@@ -151,7 +154,7 @@
     - detector confidence.
 
 - **First Hardware Qualification Tests**
-  - Verify main-camera timestamp source on both phones.
+  - Verify the selected camera timestamp source on all three phones.
   - Verify GNSS clock fields and elapsed-realtime mapping.
   - Measure real delivered FPS and frame jitter.
   - Measure GNSS/Wi-Fi clock-model agreement over several minutes.
