@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -Command \"$msg = '📌 **Serena Project Activation Reminder**' + [char]10 + [char]10 + 'At the start of each session, activate this project with Serena using the `activate_project` tool to enable semantic code analysis and project memory indexing.' + [char]10 + [char]10 + 'Run: `serena project index` to index the project.' + [char]10 + [char]10 + 'This enables: code navigation, symbol search, cross-reference resolution, and project-aware assistance.'; $o = New-Object PSObject -Property @{ systemMessage = $msg }; Write-Host ($o | ConvertTo-Json -Compress)\"",
+        "windows": "powershell -NoProfile -Command \"$msg = '📌 **Serena Project Activation Reminder**' + [char]10 + [char]10 + 'At the start of each session, activate this project with Serena using the `activate_project` tool to enable semantic code analysis and project memory indexing.' + [char]10 + [char]10 + 'Run: `serena project index` to index the project.' + [char]10 + [char]10 + 'This enables: code navigation, symbol search, cross-reference resolution, and project-aware assistance.'; $o = New-Object PSObject -Property @{ systemMessage = $msg }; Write-Host ($o | ConvertTo-Json -Compress)\"",
+        "timeout": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "topic": "android",
+  "importedAt": "2026-07-22",
+  "sources": [
+    {
+      "owner": "android",
+      "repository": "skills",
+      "branch": "main",
+      "commit": "47e1dff74a5cde5d0128c5d15e74e000323135ea",
+      "license": "Apache-2.0",
+      "importedPaths": [
+        "devtools/android-cli",
+        "profilers/perfetto-trace-analysis",
+        "testing/testing-setup"
+      ]
+    },
+    {
+      "owner": "adrigm06",
+      "repository": "Android-Engineering-Skill",
+      "branch": "main",
+      "commit": "35f3b58a90f4a3a796b1dd9a438b0a9e1add3783",
+      "license": "MIT",
+      "importedPaths": [
+        "skills/android-kotlin-concurrency",
+        "skills/android-performance"
+      ],
+      "localAdaptations": [
+        "Added references/kotlin-concurrency-patterns.md to resolve an upstream dangling reference in the imported concurrency skill."
+      ]
+    }
+  ],
+  "projectSpecificSkills": [
+    "android-camera2-timing",
+    "android-gnss-clock-model",
+    "android-two-way-clock-sync",
+    "android-roi-line-crossing-detector",
+    "sprint-timing-hardware-qualification"
+  ],
+  "primaryDocumentation": [
+    "https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics",
+    "https://developer.android.com/reference/android/hardware/camera2/CaptureResult",
+    "https://developer.android.com/reference/android/hardware/camera2/CameraConstrainedHighSpeedCaptureSession",
+    "https://developer.android.com/reference/android/hardware/camera2/CameraDevice",
+    "https://developer.android.com/reference/android/media/ImageReader",
+    "https://developer.android.com/reference/android/location/GnssClock"
+  ]
+}
