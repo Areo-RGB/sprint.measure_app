@@ -3,3 +3,6 @@
 **/build/
 local.properties
 build-output.txt
+gradle/
+
+gradle-8.13-bin.zip
