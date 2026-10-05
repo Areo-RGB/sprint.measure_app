@@ -3,11 +3,9 @@ package com.sprinttiming.app
 import kotlin.math.abs
 
 class LineCrossingDetector {
-    enum class Direction { LEFT_TO_RIGHT, RIGHT_TO_LEFT }
     enum class State { CLEAR, APPROACHING, ON_LINE, CROSSED_PENDING, CONFIRMED }
     data class Event(val timestampNanos: Long, val confidence: Float, val intervalNanos: Long)
 
-    var direction = Direction.LEFT_TO_RIGHT
     @Volatile private var sensitivity = 50
     private var previous: ByteArray? = null
     private var state = State.CLEAR
@@ -17,6 +15,8 @@ class LineCrossingDetector {
     private var confirmingFrames = 0
     private var quietFrames = 0
     private var refractoryUntil = 0L
+    private var first = 0
+    private val last get() = 2 - first
 
     fun reset() { previous = null; state = State.CLEAR; confirmingFrames = 0; quietFrames = 0; refractoryUntil = 0L }
     fun setSensitivity(value: Int) { sensitivity = value.coerceIn(0, 100); reset() }
@@ -38,11 +38,13 @@ class LineCrossingDetector {
             counts[z]++
         }
         for (i in 0..2) zone[i] /= counts[i].coerceAtLeast(1).toFloat()
-        val first = if (direction == Direction.LEFT_TO_RIGHT) 0 else 2
-        val last = 2 - first
         val active = 0.12f - configuredSensitivity * 0.0008f
         when (state) {
-            State.CLEAR -> if (zone[first] > active && zone[first] > zone[last] * 1.15f) state = State.APPROACHING
+            // The athlete may cross in either direction; the outer zone entered first defines it.
+            State.CLEAR -> when {
+                zone[0] > active && zone[0] > zone[2] * 1.15f -> { first = 0; state = State.APPROACHING }
+                zone[2] > active && zone[2] > zone[0] * 1.15f -> { first = 2; state = State.APPROACHING }
+            }
             State.APPROACHING -> {
                 if (zone[1] > active) state = State.ON_LINE
                 else if (zone.max() < active / 2) state = State.CLEAR

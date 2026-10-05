@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 data class TimingEvent(
     val senderId: Long,
@@ -37,7 +38,7 @@ class PeerTiming(
     private val onDeviceStatus: (Int, Boolean, Int, Boolean) -> Unit
 ) {
     private data class ClockEstimate(val offsets: ArrayDeque<Double> = ArrayDeque(), val delays: ArrayDeque<Double> = ArrayDeque())
-    private data class PendingTimingEvent(val sender: Long, val role: Int, val localTime: Long, val gpsTime: Long, val gpsUncertainty: Long, val confidence: Int)
+    private data class PendingTimingEvent(val sender: Long, val seq: Int, val role: Int, val localTime: Long, val gpsTime: Long, val gpsUncertainty: Long, val confidence: Int)
 
     private val multicastLock = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
         ?.createMulticastLock("sprint-timing")?.apply { setReferenceCounted(false) }
@@ -49,6 +50,9 @@ class PeerTiming(
     private val peers = ConcurrentHashMap.newKeySet<InetAddress>()
     private val clocks = ConcurrentHashMap<Long, ClockEstimate>()
     private val pendingEvents = ConcurrentHashMap<Long, PendingTimingEvent>()
+    // Each timing event is rebroadcast many times; only the first copy per (sender, seq) is delivered.
+    private val eventSeq = AtomicInteger(0)
+    private val deliveredSeq = ConcurrentHashMap<Long, Int>()
     @Volatile var offsetNanos: Long? = null
         private set
     @Volatile var roundTripNanos: Long? = null
@@ -114,16 +118,18 @@ class PeerTiming(
                 }
                 pendingEvents.remove(responder)?.let { deliverTimingEvent(it) }
             }
-            3 -> if (b.remaining() >= 37) {
+            3 -> if (b.remaining() >= 41) {
                 val sender = b.long
                 val role = b.get().toInt()
                 val remoteLocalTime = b.long
                 val gpsValue = b.long
                 val gpsUncertainty = b.long
                 val confidence = b.int
+                val seq = b.int
                 if (sender == nodeId) return
                 peers.add(packet.address); onPeerSeen()
-                val event = PendingTimingEvent(sender, role, remoteLocalTime, gpsValue, gpsUncertainty, confidence)
+                if (seq <= (deliveredSeq[sender] ?: 0)) return
+                val event = PendingTimingEvent(sender, seq, role, remoteLocalTime, gpsValue, gpsUncertainty, confidence)
                 if (!deliverTimingEvent(event)) {
                     pendingEvents[sender] = event
                     sendSyncTo(s, packet.address)
@@ -176,7 +182,9 @@ class PeerTiming(
     }
 
     private fun deliverTimingEvent(event: PendingTimingEvent): Boolean {
+        if (event.seq <= (deliveredSeq[event.sender] ?: 0)) return true
         val estimate = bestClock(event.sender) ?: return false
+        deliveredSeq[event.sender] = event.seq
         onTimingEvent(TimingEvent(
             senderId = event.sender,
             role = event.role,
@@ -197,7 +205,7 @@ class PeerTiming(
     }
     private fun sendHello() = send(ByteBuffer.allocate(10).put(5).putLong(nodeId).put(localRole.toByte()).array())
     fun broadcastTimingEvent(role: Int, localTime: Long, gpsTime: Long?, uncertainty: Long, confidence: Int) = repeatSend(
-        ByteBuffer.allocate(38).put(3).putLong(nodeId).put(role.toByte()).putLong(localTime).putLong(gpsTime ?: 0L).putLong(uncertainty).putInt(confidence).array(),
+        ByteBuffer.allocate(42).put(3).putLong(nodeId).put(role.toByte()).putLong(localTime).putLong(gpsTime ?: 0L).putLong(uncertainty).putInt(confidence).putInt(eventSeq.incrementAndGet()).array(),
         count = 16,
         gapMillis = 250,
         forceSubnet = true

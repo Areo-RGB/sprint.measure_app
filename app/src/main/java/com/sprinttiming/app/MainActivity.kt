@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.hardware.camera2.CameraCharacteristics
 import android.location.GnssMeasurementsEvent
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Build
@@ -16,6 +18,7 @@ import android.view.Gravity
 import android.view.TextureView
 import android.view.View
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.widget.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,9 +72,14 @@ class MainActivity : Activity() {
     private var finishPreviewState: Boolean? = null
     private var lastStatusSent = 0L
     private var gnssCallback: GnssMeasurementsEvent.Callback? = null
+    private var gpsListener: LocationListener? = null
+    private var resumed = false
+    private val uiHandler by lazy { Handler(mainLooper) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Timing phones sit unattended; a screen timeout would revoke camera and GNSS access.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
         peer = PeerTiming(
             context = applicationContext,
@@ -91,8 +99,29 @@ class MainActivity : Activity() {
         )
         peer.start()
         if (role == Role.DISPLAY) return
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION), 10) else beginSensors()
+        location = getSystemService(LocationManager::class.java)
+        preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(s: android.graphics.SurfaceTexture, w: Int, h: Int) { if (resumed && hasSensorPermissions()) startCamera() }
+            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureDestroyed(s: android.graphics.SurfaceTexture) = true
+            override fun onSurfaceTextureUpdated(s: android.graphics.SurfaceTexture) {}
+        }
+        if (!hasSensorPermissions()) requestPermissions(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION), 10)
     }
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        if (role != Role.DISPLAY && hasSensorPermissions()) startSensors()
+    }
+
+    override fun onPause() {
+        resumed = false
+        if (role != Role.DISPLAY) stopSensors()
+        super.onPause()
+    }
+
+    private fun hasSensorPermissions() = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun buildUi() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(11,20,16)); setPadding(24,18,24,18) }
@@ -216,22 +245,57 @@ class MainActivity : Activity() {
         prefs.edit().putString("history", updated).apply(); historyView.text = updated
     }
 
-    private fun beginSensors() {
-        if (preview.isAvailable) startCamera() else preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(s: android.graphics.SurfaceTexture, w: Int, h: Int) = startCamera()
-            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) {}
-            override fun onSurfaceTextureDestroyed(s: android.graphics.SurfaceTexture) = true
-            override fun onSurfaceTextureUpdated(s: android.graphics.SurfaceTexture) {}
-        }
-        location = getSystemService(LocationManager::class.java)
-        gnssCallback = object : GnssMeasurementsEvent.Callback() { override fun onGnssMeasurementsReceived(event: GnssMeasurementsEvent) { gnss.add(event.clock); runOnUiThread { val s = gnss.snapshot; status.text = "${cameraStatus()} · GNSS ${s.state} (${s.samples}, ±${if (s.uncertaintyNanos == Long.MAX_VALUE) "—" else fmt(s.uncertaintyNanos/1e6)} ms)" } } }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) location.registerGnssMeasurementsCallback(mainExecutor, gnssCallback!!)
-            else @Suppress("DEPRECATION") location.registerGnssMeasurementsCallback(gnssCallback!!, Handler(mainLooper))
-        } catch (_: SecurityException) {}
+    private fun startSensors() {
+        startGnss()
+        if (preview.isAvailable) startCamera()
     }
 
-    private fun startCamera() { val targetFps = if (Build.MODEL.contains("Pixel 7", true)) 60 else 30; camera = CameraTimingController(this, preview, cameraFacing, targetFps, { message -> runOnUiThread { status.text = message } }, ::crossing).also { it.setSensitivity(sensitivity); it.start() } }
+    private fun stopSensors() {
+        if (armed) { armed = false; arm.text = "ARM"; result.text = "DISARMED\nApp left the foreground" }
+        broadcastPhoneStatus(true)
+        camera?.close(); camera = null
+        stopGnss()
+    }
+
+    private fun startGnss() {
+        if (gnssCallback != null) return
+        val callback = object : GnssMeasurementsEvent.Callback() { override fun onGnssMeasurementsReceived(event: GnssMeasurementsEvent) { gnss.add(event.clock); runOnUiThread { val s = gnss.snapshot; status.text = "${cameraStatus()} · GNSS ${s.state} (${s.samples}, ±${if (s.uncertaintyNanos == Long.MAX_VALUE) "—" else fmt(s.uncertaintyNanos/1e6)} ms)" } } }
+        // Most chipsets only deliver raw GNSS measurements while a GPS location request keeps the engine on.
+        // All four methods are overridden because API 29 has no default implementations.
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) { status.text = "GPS is off · enable Location for GNSS timing" }
+            @Suppress("OVERRIDE_DEPRECATION") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        try {
+            location.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, mainLooper)
+            gpsListener = listener
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) location.registerGnssMeasurementsCallback(mainExecutor, callback)
+            else @Suppress("DEPRECATION") location.registerGnssMeasurementsCallback(callback, uiHandler)
+            gnssCallback = callback
+        } catch (_: SecurityException) {
+        } catch (_: IllegalArgumentException) { status.text = "No GPS provider on this device" }
+    }
+
+    private fun stopGnss() {
+        gnssCallback?.let { location.unregisterGnssMeasurementsCallback(it) }; gnssCallback = null
+        gpsListener?.let { location.removeUpdates(it) }; gpsListener = null
+    }
+
+    private fun startCamera() {
+        if (camera != null) return
+        val targetFps = if (Build.MODEL.contains("Pixel 7", true)) 60 else 30
+        camera = CameraTimingController(this, preview, cameraFacing, targetFps, { message -> runOnUiThread { status.text = message } }, ::crossing, ::cameraLost).also { it.setSensitivity(sensitivity); it.start() }
+    }
+
+    private fun cameraLost(lost: CameraTimingController) = runOnUiThread {
+        if (camera !== lost) return@runOnUiThread
+        if (armed) { armed = false; arm.text = "ARM"; result.text = "DISARMED · CAMERA LOST\nReopening camera…" }
+        lost.close(); camera = null
+        broadcastPhoneStatus(true)
+        uiHandler.postDelayed({ if (resumed && camera == null && preview.isAvailable && hasSensorPermissions()) startCamera() }, 1500)
+    }
     private fun cameraStatus() = "${camera?.facingName ?: "Camera"} camera ${camera?.timestampSource ?: "…"}${camera?.deliveredFps?.takeIf { it > 0 }?.let { " · ${fmt(it)} fps" } ?: ""}"
     private fun switchCamera() {
         if (armed) { armed = false; arm.text = "ARM" }
@@ -285,8 +349,9 @@ class MainActivity : Activity() {
     private fun acceptTimingEvent(event: TimingEvent) {
         if (role == Role.DISPLAY || event.role !in 1..3) return
         val incoming = Mark(event.role, event.localTimeNanos, event.gpsTimeNanos, event.gpsUncertaintyNanos, event.wifiUncertaintyNanos, event.confidencePercent)
-        val existing = marks[event.role]
-        if (event.role == 1 && existing != null && kotlin.math.abs(existing.localTime - incoming.localTime) > 1_000_000L) marks.clear()
+        // Events are unique per sender now. A START opens a new run: drop anything older (an aborted
+        // run), but keep marks that are later than it in case they arrived before the START packet.
+        if (event.role == 1) marks.entries.removeAll { it.value.localTime < incoming.localTime }
         marks[event.role] = incoming
         if (marks.size < 3) {
             result.text = "RUN IN PROGRESS\n${marks.size}/3 timestamps received"
@@ -305,8 +370,11 @@ class MainActivity : Activity() {
         marks.clear()
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) { super.onRequestPermissionsResult(requestCode, permissions, grantResults); if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) beginSensors() else status.text = "Camera and precise location permissions are required" }
-    override fun onDestroy() { camera?.close(); peer.stop(); if (::location.isInitialized) gnssCallback?.let { location.unregisterGnssMeasurementsCallback(it) }; super.onDestroy() }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) { if (resumed) startSensors() } else status.text = "Camera and precise location permissions are required"
+    }
+    override fun onDestroy() { uiHandler.removeCallbacksAndMessages(null); camera?.close(); camera = null; peer.stop(); if (::location.isInitialized) stopGnss(); super.onDestroy() }
     private fun fmt(v: Double) = String.format(Locale.US, "%.2f", v)
 
     private class LineOverlay(context: android.content.Context) : View(context) {
