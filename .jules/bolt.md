@@ -1,0 +1,3 @@
+## 2026-07-22 - Optimizing Camera2 Frame Processing Loops & GC Pressure
+**Learning:** Found significant overhead in Camera2 per-frame analysis (`LineCrossingDetector`) processing `YUV_420_888` buffers. The inner loop using bounds checking and array copies per-frame produced high GC pressure and slow analysis, despite only operating on a subset of the image data.
+**Action:** Replaced per-frame `ByteArray` allocation with pre-allocated buffer swapping. Hand-unrolled inner-loop condition statements by pre-calculating the column thresholds instead of performing `col * 3 / width` per-pixel. This prevents heavy object churn during high frame-rate timing sessions.
